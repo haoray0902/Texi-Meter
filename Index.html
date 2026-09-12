@@ -1,0 +1,389 @@
+```html
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <!-- 加入 viewport-fit=cover 以支援手機的瀏海螢幕 -->
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+    
+    <!-- PWA 與 App 相關設定 -->
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <meta name="apple-mobile-web-app-title" content="計費器">
+    <meta name="theme-color" content="#1f2937">
+    
+    <!-- 內嵌 Manifest 設定檔，讓手機可以辨識它為一個 App -->
+    <link rel="manifest" href="data:application/manifest+json;charset=utf-8,%7B%22name%22%3A%22Taxi%20Meter%22%2C%22short_name%22%3A%22%E8%A8%88%E8%B2%BB%E5%99%A8%22%2C%22start_url%22%3A%22.%22%2C%22display%22%3A%22standalone%22%2C%22background_color%22%3A%22%23f3f4f6%22%2C%22theme_color%22%3A%22%231f2937%22%2C%22icons%22%3A%5B%7B%22src%22%3A%22data%3Aimage%2Fsvg%2Bxml%2C%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%20100%20100%22%3E%3Ctext%20y%3D%22.9em%22%20font-size%3D%2290%22%3E%F0%9F%9A%96%3C%2Ftext%3E%3C%2Fsvg%3E%22%2C%22sizes%22%3A%22192x192%22%2C%22type%22%3A%22image%2Fsvg%2Bxml%22%7D%5D%7D">
+    
+    <!-- iOS 專用 Icon (使用計程車 Emoji SVG 作為圖示) -->
+    <link rel="apple-touch-icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><rect width=%22100%22 height=%22100%22 fill=%22%23facc15%22/><text x=%2250%22 y=%2265%22 font-size=%2260%22 text-anchor=%22middle%22>🚖</text></svg>">
+
+    <title>GPS 計程車跳表計費器</title>
+    <!-- 使用 Tailwind CSS 進行快速且現代的樣式設計 -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- 引入 Phosphor Icons 以便在介面中使用圖示 -->
+    <script src="https://unpkg.com/@phosphor-icons/web"></script>
+    <style>
+        /* 讓網頁行為更像 App (防止反白、下拉更新、禁止雙擊放大) */
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background-color: #f3f4f6; /* Tailwind gray-100 */
+            overscroll-behavior-y: contain; /* 防止手機瀏覽器下拉重新整理 */
+            -webkit-user-select: none; /* Safari 防止文字被選取 */
+            user-select: none; /* 防止文字被選取 */
+            -webkit-tap-highlight-color: transparent; /* 移除點擊時的半透明灰底 */
+            touch-action: pan-x pan-y;
+        }
+        
+        /* 數字跳動時的簡單動畫效果 */
+        @keyframes pulse {
+            0% { transform: scale(1); }
+            50% { transform: scale(1.05); }
+            100% { transform: scale(1); }
+        }
+        .update-anim {
+            animation: pulse 0.3s ease-in-out;
+        }
+
+        /* 確保主卡片在螢幕中央且有良好的陰影和圓角 */
+        .glass-panel {
+            background: rgba(255, 255, 255, 0.95);
+            backdrop-filter: blur(10px);
+            border: 1px solid rgba(255, 255, 255, 0.2);
+            box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.1), 0 8px 10px -6px rgba(0, 0, 0, 0.1);
+        }
+    </style>
+</head>
+<body class="min-h-screen flex items-center justify-center p-4">
+
+    <div class="glass-panel rounded-3xl w-full max-w-md overflow-hidden relative">
+        
+        <!-- 頂部狀態列：顯示 GPS 狀態 -->
+        <div class="bg-gray-800 text-white px-4 py-3 flex items-center justify-between">
+            <div class="flex items-center gap-2">
+                <i class="ph ph-taxi text-xl text-yellow-400"></i>
+                <span class="font-bold tracking-wider">TAXI METER</span>
+            </div>
+            <div id="gps-status" class="flex items-center gap-2 text-xs font-medium text-gray-300">
+                <i class="ph ph-gps-slash text-red-400"></i>
+                <span>等待定位...</span>
+            </div>
+        </div>
+
+        <!-- 內容區塊 -->
+        <div class="p-6 space-y-6">
+            
+            <!-- 費用顯示區塊：佔據最醒目的位置 -->
+            <div class="bg-gradient-to-br from-yellow-50 to-yellow-100 rounded-2xl p-6 text-center shadow-inner border border-yellow-200">
+                <p class="text-yellow-800 text-sm font-semibold mb-1 uppercase tracking-widest">總費用</p>
+                <div class="flex items-baseline justify-center gap-1 text-yellow-900">
+                    <span class="text-4xl font-bold">NT$</span>
+                    <span id="display-fare" class="text-6xl font-black tabular-nums tracking-tighter transition-all duration-300">50</span>
+                </div>
+                <p class="text-yellow-700/70 text-xs mt-2">起步價 $50 + 每公里 $5</p>
+            </div>
+
+            <!-- 數據統計區塊：顯示距離和時間 -->
+            <div class="grid grid-cols-2 gap-4">
+                <!-- 距離顯示 -->
+                <div class="bg-white rounded-2xl p-4 border border-gray-100 shadow-sm flex flex-col items-center justify-center">
+                    <i class="ph ph-path text-2xl text-blue-500 mb-1"></i>
+                    <p class="text-gray-500 text-xs font-medium uppercase mb-1">行駛距離</p>
+                    <div class="flex items-baseline gap-1">
+                        <span id="display-distance" class="text-2xl font-bold text-gray-800 tabular-nums">0.00</span>
+                        <span class="text-sm font-medium text-gray-500">公里</span>
+                    </div>
+                </div>
+                
+                <!-- 時間顯示 -->
+                <div class="bg-white rounded-2xl p-4 border border-gray-100 shadow-sm flex flex-col items-center justify-center">
+                    <i class="ph ph-clock text-2xl text-green-500 mb-1"></i>
+                    <p class="text-gray-500 text-xs font-medium uppercase mb-1">經過時間</p>
+                    <div class="flex items-baseline gap-1">
+                        <span id="display-time" class="text-2xl font-bold text-gray-800 tabular-nums">00:00</span>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 控制按鈕區塊 -->
+            <button id="btn-start-stop" class="w-full bg-gray-900 hover:bg-gray-800 text-white font-bold py-4 rounded-2xl transition-colors duration-200 flex items-center justify-center gap-2 text-lg shadow-lg">
+                <i class="ph ph-play-circle text-2xl"></i>
+                <span>開始計費</span>
+            </button>
+            
+            <button id="btn-reset" class="w-full bg-gray-100 hover:bg-gray-200 text-gray-600 font-semibold py-3 rounded-2xl transition-colors duration-200 flex items-center justify-center gap-2 hidden">
+                <i class="ph ph-arrow-counter-clockwise text-xl"></i>
+                <span>重置</span>
+            </button>
+
+            <!-- 系統日誌：用於顯示除錯或狀態訊息 -->
+            <div class="mt-4">
+                <button id="toggle-log" class="text-xs text-gray-400 hover:text-gray-600 flex items-center gap-1 mx-auto">
+                    <i class="ph ph-terminal"></i> 顯示日誌
+                </button>
+                <div id="log-container" class="hidden mt-2 bg-gray-900 rounded-xl p-3 h-32 overflow-y-auto text-xs font-mono text-green-400 border border-gray-700">
+                    <div>[系統] 準備就緒。</div>
+                </div>
+            </div>
+
+        </div>
+    </div>
+
+    <script>
+        /**
+         * 計程車計費器主要邏輯
+         */
+        
+        // --- 設定常數 ---
+        const BASE_FARE = 50;           // 起步價 (元)
+        const FARE_PER_KM = 5;          // 每公里費用 (元)
+        
+        // --- 狀態變數 ---
+        let isRunning = false;          // 是否正在計費中
+        let watchId = null;             // GPS 監聽的 ID，用於停止監聽
+        let startTimestamp = null;      // 開始計費的時間戳記
+        let totalDistance = 0;          // 累積距離 (公里)
+        let currentFare = BASE_FARE;    // 目前費用
+        let lastPosition = null;        // 上一次記錄的 GPS 座標
+        let timerInterval = null;       // 更新 UI 時間的計時器
+
+        // --- DOM 元素參考 ---
+        const elFare = document.getElementById('display-fare');
+        const elDistance = document.getElementById('display-distance');
+        const elTime = document.getElementById('display-time');
+        const btnStartStop = document.getElementById('btn-start-stop');
+        const btnReset = document.getElementById('btn-reset');
+        const elGpsStatus = document.getElementById('gps-status');
+        const elLogContainer = document.getElementById('log-container');
+        const btnToggleLog = document.getElementById('toggle-log');
+
+        /**
+         * 使用 Haversine 公式計算兩個經緯度之間的直線距離 (以公里為單位)
+         * 這是計算地球表面兩點之間大圓距離的標準方法。
+         */
+        function calculateDistance(lat1, lon1, lat2, lon2) {
+            const R = 6371; // 地球半徑，單位為公里
+            const dLat = (lat2 - lat1) * Math.PI / 180;
+            const dLon = (lon2 - lon1) * Math.PI / 180;
+            const a = 
+                Math.sin(dLat/2) * Math.sin(dLat/2) +
+                Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) * 
+                Math.sin(dLon/2) * Math.sin(dLon/2); 
+            const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a)); 
+            const distance = R * c; // 距離，單位為公里
+            return distance;
+        }
+
+        /**
+         * 更新費用顯示
+         * 根據累積距離計算，並加上小動畫
+         */
+        function updateFare() {
+            // 計算：起步價 + (累積距離(無條件捨去到整數) * 每公里單價)
+            // 這裡設定為每滿 1 公里才加錢。您可以根據需求調整邏輯（例如每 0.5 公里）。
+            const additionalFare = Math.floor(totalDistance) * FARE_PER_KM;
+            const newFare = BASE_FARE + additionalFare;
+
+            if (newFare !== currentFare) {
+                currentFare = newFare;
+                elFare.innerText = currentFare;
+                
+                // 觸發跳動動畫
+                elFare.classList.remove('update-anim');
+                void elFare.offsetWidth; // 觸發 reflow
+                elFare.classList.add('update-anim');
+                
+                addLog(`費用更新: NT$${currentFare}`);
+            }
+        }
+
+        /**
+         * 格式化時間戳記為 MM:SS 格式
+         */
+        function formatTime(milliseconds) {
+            const totalSeconds = Math.floor(milliseconds / 1000);
+            const minutes = Math.floor(totalSeconds / 60);
+            const seconds = totalSeconds % 60;
+            return `${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}`;
+        }
+
+        /**
+         * 更新經過時間的顯示
+         */
+        function updateTime() {
+            if (!isRunning) return;
+            const elapsed = Date.now() - startTimestamp;
+            elTime.innerText = formatTime(elapsed);
+        }
+
+        /**
+         * 處理成功取得 GPS 位置的事件
+         */
+        function onPositionSuccess(position) {
+            const { latitude, longitude, accuracy } = position.coords;
+            
+            // 更新 GPS 狀態 UI
+            elGpsStatus.innerHTML = `<i class="ph ph-gps-fix text-green-400"></i><span class="text-green-300">定位精準度: ${Math.round(accuracy)}m</span>`;
+
+            // 如果這是第一次取得位置
+            if (!lastPosition) {
+                lastPosition = { lat: latitude, lon: longitude };
+                addLog(`取得初始位置: ${latitude.toFixed(4)}, ${longitude.toFixed(4)}`);
+                return;
+            }
+
+            // 計算與上一個位置的距離
+            const dist = calculateDistance(
+                lastPosition.lat, lastPosition.lon,
+                latitude, longitude
+            );
+
+            // 過濾掉太小的跳動 (例如 GPS 飄移，小於 10 公尺的變化忽略)
+            // 根據實際情況，如果走路測試可能需要調小這個值
+            if (dist > 0.01) { 
+                totalDistance += dist;
+                lastPosition = { lat: latitude, lon: longitude };
+                
+                // 更新距離顯示，保留兩位小數
+                elDistance.innerText = totalDistance.toFixed(2);
+                
+                // 檢查是否需要更新費用
+                updateFare();
+                
+                addLog(`移動: +${(dist*1000).toFixed(0)}m, 總計: ${totalDistance.toFixed(2)}km`);
+            }
+        }
+
+        /**
+         * 處理獲取 GPS 位置失敗的事件
+         */
+        function onPositionError(error) {
+            let msg = '無法取得位置';
+            switch(error.code) {
+                case error.PERMISSION_DENIED: msg = '使用者拒絕定位權限'; break;
+                case error.POSITION_UNAVAILABLE: msg = '無法獲取位置資訊'; break;
+                case error.TIMEOUT: msg = '獲取位置超時'; break;
+            }
+            elGpsStatus.innerHTML = `<i class="ph ph-warning-circle text-red-500"></i><span class="text-red-400">${msg}</span>`;
+            addLog(`[錯誤] GPS: ${msg}`, true);
+        }
+
+        /**
+         * 開始計費行程
+         */
+        function startTrip() {
+            if (!navigator.geolocation) {
+                alert("您的瀏覽器不支援地理位置功能，無法使用此計費器。");
+                return;
+            }
+
+            isRunning = true;
+            startTimestamp = Date.now();
+            lastPosition = null; // 重置初始位置，以便在第一次回報時設定
+            totalDistance = 0;
+            currentFare = BASE_FARE;
+            
+            // 更新 UI 狀態
+            btnStartStop.innerHTML = `<i class="ph ph-stop-circle text-2xl"></i><span>結束行程</span>`;
+            btnStartStop.classList.replace('bg-gray-900', 'bg-red-600');
+            btnStartStop.classList.replace('hover:bg-gray-800', 'hover:bg-red-700');
+            btnReset.classList.add('hidden');
+            elFare.innerText = BASE_FARE;
+            elDistance.innerText = "0.00";
+            
+            addLog("--- 行程開始 ---");
+            elGpsStatus.innerHTML = `<i class="ph ph-spinner-gap animate-spin text-blue-400"></i><span class="text-blue-300">定位中...</span>`;
+
+            // 開始定時更新時間顯示
+            timerInterval = setInterval(updateTime, 1000);
+
+            // 開始監聽 GPS 位置變化
+            // enableHighAccuracy: 盡可能取得最準確的位置
+            // maximumAge: 不要使用快取的位置
+            watchId = navigator.geolocation.watchPosition(
+                onPositionSuccess,
+                onPositionError,
+                { enableHighAccuracy: true, maximumAge: 0, timeout: 10000 }
+            );
+        }
+
+        /**
+         * 結束計費行程
+         */
+        function stopTrip() {
+            isRunning = false;
+            
+            // 清除計時器和 GPS 監聽
+            if (timerInterval) clearInterval(timerInterval);
+            if (watchId !== null) navigator.geolocation.clearWatch(watchId);
+            
+            // 更新 UI 狀態
+            btnStartStop.innerHTML = `<i class="ph ph-play-circle text-2xl"></i><span>開始新行程</span>`;
+            btnStartStop.classList.replace('bg-red-600', 'bg-gray-900');
+            btnStartStop.classList.replace('hover:bg-red-700', 'hover:bg-gray-800');
+            btnReset.classList.remove('hidden'); // 顯示重置按鈕
+            
+            elGpsStatus.innerHTML = `<i class="ph ph-gps-slash text-gray-400"></i><span class="text-gray-400">已停止定位</span>`;
+            
+            addLog("--- 行程結束 ---");
+            addLog(`總計費: NT$${currentFare}`);
+            addLog(`總距離: ${totalDistance.toFixed(2)}km`);
+        }
+
+        /**
+         * 重置計費器
+         */
+        function resetTrip() {
+            elFare.innerText = BASE_FARE;
+            elDistance.innerText = "0.00";
+            elTime.innerText = "00:00";
+            btnReset.classList.add('hidden');
+            btnStartStop.innerHTML = `<i class="ph ph-play-circle text-2xl"></i><span>開始計費</span>`;
+            addLog("計費器已重置。");
+        }
+
+        /**
+         * 新增日誌訊息到畫面底部
+         */
+        function addLog(msg, isError = false) {
+            const timeStr = new Date().toLocaleTimeString('zh-TW', {hour12: false});
+            const div = document.createElement('div');
+            div.textContent = `[${timeStr}] ${msg}`;
+            if (isError) div.classList.add('text-red-400');
+            elLogContainer.appendChild(div);
+            // 捲動到底部
+            elLogContainer.scrollTop = elLogContainer.scrollHeight;
+        }
+
+        // --- 事件綁定 ---
+        
+        btnStartStop.addEventListener('click', () => {
+            if (isRunning) {
+                stopTrip();
+            } else {
+                startTrip();
+            }
+        });
+
+        btnReset.addEventListener('click', resetTrip);
+
+        btnToggleLog.addEventListener('click', () => {
+            elLogContainer.classList.toggle('hidden');
+            const isHidden = elLogContainer.classList.contains('hidden');
+            btnToggleLog.innerHTML = `<i class="ph ph-terminal"></i> ${isHidden ? '顯示日誌' : '隱藏日誌'}`;
+        });
+
+        // 初始化狀態檢查
+        if ("geolocation" in navigator) {
+            addLog("GPS 功能已就緒，等待開始。");
+        } else {
+            addLog("警告：瀏覽器不支援 GPS 定位。", true);
+            elGpsStatus.innerHTML = `<i class="ph ph-warning text-red-500"></i><span class="text-red-400">不支援定位</span>`;
+            btnStartStop.disabled = true;
+            btnStartStop.classList.add('opacity-50', 'cursor-not-allowed');
+        }
+
+    </script>
+</body>
+</html>
+```
